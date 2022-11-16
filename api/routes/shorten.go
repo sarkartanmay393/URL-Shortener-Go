@@ -7,7 +7,6 @@ import (
 	"github.com/google/uuid"
 	"github.com/sarkartanmay393/URL-Shortener-Go/database"
 	"github.com/sarkartanmay393/URL-Shortener-Go/helpers"
-	"log"
 	"os"
 	"strconv"
 	"time"
@@ -31,7 +30,7 @@ type response struct {
 
 func ShortenURL(ctx *fiber.Ctx) error {
 	body := new(request)
-	if err := ctx.BodyParser(body); err != nil {
+	if err := ctx.BodyParser(&body); err != nil {
 		return ctx.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "cannot request parse body"})
 	}
 
@@ -41,14 +40,14 @@ func ShortenURL(ctx *fiber.Ctx) error {
 
 	val, err := r1.Get(database.Ctx, ctx.IP()).Result()
 	if err == redis.Nil {
-		log.Printf("Error ShortenURL: %v\n", r1.Set(database.Ctx, ctx.IP(), os.Getenv("API_QUOTA"), 30*time.Minute).Err().Error())
+		_ = r1.Set(database.Ctx, ctx.IP(), os.Getenv("API_QUOTA"), 30*60*time.Second).Err()
 	} else {
 		valInt, _ := strconv.Atoi(val)
 		if valInt <= 0 {
 			limit, _ := r1.TTL(database.Ctx, ctx.IP()).Result()
 			return ctx.Status(fiber.StatusServiceUnavailable).JSON(fiber.Map{
 				"error":      "Rate limit crossed",
-				"rate_limit": limit / time.Nanosecond,
+				"rate_limit": limit / time.Nanosecond / time.Minute,
 			})
 		}
 	}
@@ -60,7 +59,7 @@ func ShortenURL(ctx *fiber.Ctx) error {
 
 	// Check for domain error, It is kind of error when the domain is not valid
 	if !helpers.RemoveDomainError(body.URL) {
-		return ctx.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "cannot remove domain error"})
+		return ctx.Status(fiber.StatusServiceUnavailable).JSON(fiber.Map{"error": "cannot remove domain error"})
 	}
 
 	// Enforce https, ssl, etc.
@@ -78,22 +77,22 @@ func ShortenURL(ctx *fiber.Ctx) error {
 	defer r.Close()
 
 	// duplication of shorten url is prohibited here.
-	existInt, _ := r.Exists(database.Ctx, id).Result()
-	if existInt == 1 {
+	val, _ = r.Get(database.Ctx, id).Result()
+	if val != "" {
 		return ctx.Status(fiber.StatusForbidden).JSON(fiber.Map{
 			"error": "custom short is already in use",
 		})
 	}
 
 	if body.Expiry == 0 {
-		body.Expiry = 24 * time.Hour
+		body.Expiry = 24
 	}
 
-	err = r.Set(database.Ctx, id, body.URL, body.Expiry).Err()
+	err = r.Set(database.Ctx, id, body.URL, body.Expiry*3600*time.Second).Err()
 	if err != nil {
 		return ctx.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
 			"error":    "unable to connect to server",
-			"rawError": err,
+			"rawError": err.Error(),
 		})
 	}
 
@@ -101,7 +100,7 @@ func ShortenURL(ctx *fiber.Ctx) error {
 		URL:             body.URL,
 		CustomShort:     "",
 		Expiry:          body.Expiry,
-		XRateRemaining:  10,
+		XRateRemaining:  100,
 		XRateLimitReset: 30,
 	}
 

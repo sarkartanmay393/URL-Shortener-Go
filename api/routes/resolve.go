@@ -18,16 +18,16 @@ func ResolveURL(ctx *fiber.Ctx) error {
 		return ctx.Status(fiber.StatusNotFound).JSON(fiber.Map{
 			"error": "ID not found in database",
 		})
-	} else if value == "" {
-		return ctx.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+	} else if err != nil {
+		return ctx.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
 			"error": "Error while fetching short url from database",
 		})
 	}
 
-	//rInr := database.CreateClient(1)
-	//defer rInr.Close()
-	//
-	//_ = rInr.Incr(database.Ctx, url)
+	rInr := database.CreateClient(1)
+	defer rInr.Close()
 
-	return ctx.Redirect(value, fiber.StatusTemporaryRedirect)
+	_ = rInr.Incr(database.Ctx, "counter")
+
+	return ctx.Redirect(value, 301)
 }
